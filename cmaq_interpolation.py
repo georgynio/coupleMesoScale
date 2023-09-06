@@ -71,7 +71,7 @@ for tin, time in enumerate(range(0, 5 * 24 * 3600, 3600)):
         if "ground" in f or "top" in f:
             pass
         elif "bound" in f:
-            print(f'Work in boundary --> {f}')
+            print(f'\n Work in boundary --> {f}')
             f_bound = os.path.join(path, f)
             # read point file from boundaryData
             bdy = pd.read_csv(
@@ -82,15 +82,16 @@ for tin, time in enumerate(range(0, 5 * 24 * 3600, 3600)):
             val_cmaq = bdy_value(nc=nc, mode='cmaq', df=f_bound)
             val_no = val_cmaq.var_dict(varname='NO', time=tin)
             val_no2 = val_cmaq.var_dict(varname='NO2', time=tin)
+            # convert ppmv to ug/m3
             val_nox = val_no + val_no2
 
             # save each boundary file at /constant/boundaryData/boud_file
             os.makedirs(f"{c_path+f[6:]}/{time}", exist_ok=True)
-            with open(f"{c_path+f[6:]}/{time}/T", "w", encoding="utf-8") as f_nox:
+            with open(f"{c_path+f[6:]}/{time}/tracer", "w", encoding="utf-8") as f_nox:
                 f_nox.write(f"{bdy.shape[0]} \n")
                 f_nox.write("(\n")
                 for index, row in enumerate(val_no):
-                    print(row)
+                    #print(row)
                     nox = row + val_no2[index]
                     # the position depends on the building main axis
                     f_nox.write(f"{nox}\n")
@@ -105,5 +106,5 @@ for tin, time in enumerate(range(0, 5 * 24 * 3600, 3600)):
             #         f_0.write('turbulentKE          1.3;\n')
             #         f_0.write('turbulentEpsilon     0.01;\n')
             #         f_0.write('// ************************************************************************* //')
-    print(f"*-*-*-*- End {time} -*-*-*-*")
+    print(f"\n*-*-*-*- End {time} -*-*-*-*\n")
     print()

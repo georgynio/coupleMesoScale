@@ -102,10 +102,10 @@ class bdy_value:
         with xr.set_options(keep_attrs=True):
             if latmin != latmax and lonmin != lonmax:
                 crop_value = crop_value.where(
-                    (lat >= latmin) & (lat <= latmax), drop=True
+                    (lon >= lonmin) & (lon <= lonmax), drop=True
                 )
                 crop_value = crop_value.where(
-                    (lon >= lonmin) & (lon <= lonmax), drop=True
+                    (lat >= latmin) & (lat <= latmax), drop=True
                 )
             elif (lonmin == lonmax and latmin == latmax) or (
                 distance(latmin, latmax, val="lat") < dx
@@ -157,6 +157,20 @@ class bdy_value:
         """
         lat, lon, height, dx, dy, v_var = self._get_mode(varname=varname, time=time)
         crop_variable = self._get_crop(lat, lon, height, dx, dy, v_var)
+#        print(crop_variable)
+        print(f"\t\tThe pollutant reference units is in {crop_variable.units} \n")
+        if "ppb" in crop_variable.units:
+            if varname=="NO" or varname=="NO2":
+                _, _, _, _, _, pres = self._get_mode(varname="PRES", time=time)
+                _, _, _, _, _, temp = self._get_mode(varname="TA", time=time)
+                pres = self._get_crop(lat, lon, height, dx, dy, pres)
+                temp = self._get_crop(lat, lon, height, dx, dy, temp)
+#                print(pres)
+                if varname=="NO":
+                    wm = 30
+                else:
+                    wm = 46
+                crop_variable = (crop_variable*1e-3) * pres * wm / (8.1314 * temp)
         crop_height = self._get_crop(lat, lon, height, dx, dy, height)
         return crop_variable, crop_height
 
@@ -215,7 +229,7 @@ class bdy_value:
             new_val (list): List of boundary variable values.
         """
 
-       wrf_var = self._make_dict(varname=varname, time=time)
+        wrf_var = self._make_dict(varname=varname, time=time)
         lat, lon = self._get_ll(varname=varname, time=time)
         df_copy = self.df.copy()
         df_copy["lat_wrf"] = lat
@@ -287,37 +301,38 @@ def find_nearest(array, values, coord=None):
         nearest_indices (int or list): Index or list of indices.
     """
     if isinstance(values, (float, int)):
+        values = [values]  # Convert single value to a list
+
+    nearest_indices = []
+    for value in values:
         if coord == "lon":
-            return np.argmin(np.abs(array[0, :].values - values))
-        if coord == "lat":
-            return np.argmin(np.abs(array[:, 0].values - values))
-    else:
-        nearest = []
-        for value in values:
-            if coord == "lon":
-                nearest.append(np.argmin(np.abs(array[0, :].values - value)))
-            if coord == "lat":
-                nearest.append(np.argmin(np.abs(array[:, 0].values - value)))
-        return nearest
+            axis = 1
+        elif coord == "lat":
+            axis = 0
+        else:
+            raise ValueError("Invalid coord parameter. Use 'lat' or 'lon'.")
 
-
-# def find_nearest(array, values, coord=None):
-#     """
-#     Get the index of nearest latitude or longitude value
-#     """
-#     if type(values) in [np.float64, np.int]:
-#         if coord == "lon":
-#             return np.argmin(np.abs(array[0, :].values - values))
-#         if coord == "lat":
-#             return np.argmin(np.abs(array[:, 0].values - values))
-#     else:
-#         nearest = []
-#         for value in values:
-#             if coord == "lon":
-#                 nearest.append(np.argmin(np.abs(array[0, :].values - value)))
-#             if coord == "lat":
-#                 nearest.append(np.argmin(np.abs(array[:, 0].values - value)))
-#         return nearest
+        nearest_index = np.argmin(np.abs(array.values - value), axis=axis)
+#        print(nearest_index)
+        nearest_indices.append(int(nearest_index[0]))
+    if len(nearest_indices) == 1:
+        return nearest_indices[0]
+    return nearest_indices
+#    if isinstance(values, (float, int)):
+#        if coord == "lon":
+#            return np.argmin(np.abs(array[0, :].values - values))
+#        if coord == "lat":
+#            return np.argmin(np.abs(array[:, 0].values - values))
+#    else:
+#        nearest = []
+#        for value in values:
+#            if coord == "lon":
+#                nearest.append(np.argmin(np.abs(array[0, :].values - value)))
+#            if coord == "lat":
+#                nearest.append(np.argmin(np.abs(array[:, 0].values - value)))
+#        return nearest
+#
+#
 
 
 def distance(val1, val2, val=None):
