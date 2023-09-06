@@ -1,0 +1,23 @@
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      range;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+Xmin        0;
+Xmax        1304;
+Ymin        0;
+Ymax        2030;
+Zmin        0;
+Zmax        350;
+offsetZ     0;
+Latmin      -20.26817;
+Latmax      -20.24395;
+Lonmin      -40.27287;
+Lonmax      -40.26817;
+wrfout_inp  "wrfout_d02_2019-11-29_00:00:00"";
+wrfout_salida "wrfout_recorte";
