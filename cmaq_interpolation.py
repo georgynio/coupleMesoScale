@@ -1,110 +1,53 @@
 import os
-import numpy as np
 import pandas as pd
-import geopandas as gpd
-
+import numpy as np
 from main_of import bdy_value
 
-path = os.getcwd()
-files = os.listdir()
+def process_boundary_file(file_name, nc, time, path, initial_time, metcro3d=None):
+    print(f"Working at ************ {file_name} *********")
+    f_bound = os.path.join(path, file_name)
+    bdy = pd.read_csv(f_bound, skiprows=1, names=["latitude", "longitude", "altura"], sep=";")
 
-time = 0
+    c_path = "constant/boundaryData/"
+    val_wrf = bdy_value(nc=nc, mode="cmaq", df=f_bound, metcro3d=metcro3d)
+    val_no = np.asarray(val_wrf.var_dict(varname="NO", time=time))/1.23   # NO  -> ppb/1.23 = ug/m3
+    val_no2 = np.asarray(val_wrf.var_dict(varname="NO2", time=time))/1.88 # NO2 -> ppb/1.88 = ug/m3
 
-altura_max = 350
+    tempo =  time - initial_time
+    # save each boundary file at /constant/boundaryData/bound_file
+    output_folder = os.path.join(c_path, f"{file_name[6:]}/{tempo*3600}")
+    
+    os.makedirs(output_folder, exist_ok=True)
+    with open(os.path.join(output_folder, "tracer"), "w", encoding="utf-8") as f_nox:
+        f_nox.write(f"{bdy.shape[0]} \n")
+        f_nox.write("(\n")
+        for index, row in enumerate(val_no):
+            nox = row + val_no2[index]
+            # the position depends on the building main axis
+            f_nox.write(f"{float(nox)}\n")
+        f_nox.write(")")
 
 
-ncfls = list(filter(lambda a: "CCTM_ACONC" in a, files))
+
+#path = os.getcwd()
+path = "/home/yossimar/Documentos/of-3.5m/"
+files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+
+# Lista de nombres a procesar
+names_to_process = ['bound_north', 'bound_south', 'bound_east', 'bound_west']
+
+
+#print(files)
+ncfls = [a for a in files if "CCTM_ACONC" in a]
 nc = os.path.join(path, ncfls[0])
 
-cabecalho_NO = """/*--------------------------------*- C++ -*----------------------------------*\\
-| =========                 |                                                 |
-| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\    /   O peration     | Version:                                        |
-|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
-|    \\/     M anipulation  |                                                 |
-\*---------------------------------------------------------------------------*/
-FoamFile
-{
-    version     2.0;
-    format      ascii;
-    class       volScalarField;
-    object      NO;
-}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n"""
+initial = 10*24
+end = 31*24
+# Procesar cada nombre de archivo
+for time in range(initial, end, 1):
+    for name in names_to_process:
+        if name in files:
+            process_boundary_file(name, nc, time, path, initial, metcro3d=f'{path}/METCRO3D_d03.nc')
 
-cabecalho_NO2 = """/*--------------------------------*- C++ -*----------------------------------*\\
-| =========                 |                                                 |
-| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\    /   O peration     | Version:                                        |
-|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
-|    \\/     M anipulation  |                                                 |
-\*---------------------------------------------------------------------------*/
-FoamFile
-{
-    version     2.0;
-    format      ascii;
-    class       volScalarField;
-    object      NO2;
-}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n"""
-
-
-cabecalho_NOX = """/*--------------------------------*- C++ -*----------------------------------*\\
-| =========                 |                                                 |
-| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\    /   O peration     | Version:                                        |
-|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
-|    \\/     M anipulation  |                                                 |
-\*---------------------------------------------------------------------------*/
-FoamFile
-{
-    version     2.0;
-    format      ascii;
-    class       volScalarField;
-    object      NOX;
-}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n"""
-
-bounds = []
-for tin, time in enumerate(range(0, 5 * 24 * 3600, 3600)):
-    for f in files:
-        if "ground" in f or "top" in f:
-            pass
-        elif "bound" in f:
-            print(f'\n Work in boundary --> {f}')
-            f_bound = os.path.join(path, f)
-            # read point file from boundaryData
-            bdy = pd.read_csv(
-                f_bound, skiprows=1, names=["latitude", "longitude", "altura"], sep=";"
-            )
-            # bounds.append(bdy)
-            c_path = "constant/boundaryData/"
-            val_cmaq = bdy_value(nc=nc, mode='cmaq', df=f_bound)
-            val_no = val_cmaq.var_dict(varname='NO', time=tin)
-            val_no2 = val_cmaq.var_dict(varname='NO2', time=tin)
-            # convert ppmv to ug/m3
-            val_nox = val_no + val_no2
-
-            # save each boundary file at /constant/boundaryData/boud_file
-            os.makedirs(f"{c_path+f[6:]}/{time}", exist_ok=True)
-            with open(f"{c_path+f[6:]}/{time}/tracer", "w", encoding="utf-8") as f_nox:
-                f_nox.write(f"{bdy.shape[0]} \n")
-                f_nox.write("(\n")
-                for index, row in enumerate(val_no):
-                    #print(row)
-                    nox = row + val_no2[index]
-                    # the position depends on the building main axis
-                    f_nox.write(f"{nox}\n")
-                f_nox.write(")")
-
-            # # save each initial condition
-            # if time==0:
-            #     with open('0.org/include/initialConditions', 'w', encoding='utf-8') as f_0:
-            #         f_0.write(cabecalho_2)
-            #         f_0.write(f'flowVelocity        ({np.mean(val_u)} {np.mean(val_v)} {np.mean(val_w)});\n')
-            #         f_0.write('pressure             0;\n')
-            #         f_0.write('turbulentKE          1.3;\n')
-            #         f_0.write('turbulentEpsilon     0.01;\n')
-            #         f_0.write('// ************************************************************************* //')
-    print(f"\n*-*-*-*- End {time} -*-*-*-*\n")
+    print(f"*-*-*-*- End {time} -*-*-*-*")
     print()
