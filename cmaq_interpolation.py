@@ -9,9 +9,9 @@ def process_boundary_file(file_name, nc, time, path, initial_time, metcro3d=None
     bdy = pd.read_csv(f_bound, skiprows=1, names=["latitude", "longitude", "altura"], sep=";")
 
     c_path = "constant/boundaryData/"
-    val_wrf = bdy_value(nc=nc, mode="cmaq", df=f_bound, metcro3d=metcro3d)
-    val_no = np.asarray(val_wrf.var_dict(varname="NO", time=time))/1.23   # NO  -> ppb/1.23 = ug/m3
-    val_no2 = np.asarray(val_wrf.var_dict(varname="NO2", time=time))/1.88 # NO2 -> ppb/1.88 = ug/m3
+    val_wrf = bdy_value(nc=nc, mode="cmaq", df=f_bound, metcro3d=metcro3d, units='ug/m3')
+    val_no = np.asarray(val_wrf.var_dict(varname="NO", time=time))   # NO  -> ppb/1.23 = ug/m3
+    val_no2 = np.asarray(val_wrf.var_dict(varname="NO2", time=time)) # NO2 -> ppb/1.88 = ug/m3
 
     tempo =  time - initial_time
     # save each boundary file at /constant/boundaryData/bound_file
@@ -21,8 +21,8 @@ def process_boundary_file(file_name, nc, time, path, initial_time, metcro3d=None
     with open(os.path.join(output_folder, "tracer"), "w", encoding="utf-8") as f_nox:
         f_nox.write(f"{bdy.shape[0]} \n")
         f_nox.write("(\n")
-        for index, row in enumerate(val_no):
-            nox = row + val_no2[index]
+        for index, no in enumerate(val_no):
+            nox = (no*0.9*30.01 + val_no2[index]*0.1*46.01)
             # the position depends on the building main axis
             f_nox.write(f"{float(nox)}\n")
         f_nox.write(")")
@@ -41,8 +41,8 @@ names_to_process = ['bound_north', 'bound_south', 'bound_east', 'bound_west']
 ncfls = [a for a in files if "CCTM_ACONC" in a]
 nc = os.path.join(path, ncfls[0])
 
-initial = 10*24
-end = 31*24
+initial = 0*24
+end = 33*24
 # Procesar cada nombre de archivo
 for time in range(initial, end, 1):
     for name in names_to_process:

@@ -1,0 +1,21 @@
+Para utilizar estes scripts antes deve ser realizado 2
+procedimientos:
+- reconstructPar -constant time 0
+- ofWRF
+
+Produto destes programas novos arquivos são gerados, 
+com nomes, seguindo a estrutura bound_*, por exemplo:
+- bound_north
+- bound_south
+- bound_east                      
+- bound_west
+- bound_ground
+
+Estes scripts são executados depois de obter as posições 
+dos centros das celulas que constituem cada contorno,
+dentro da pasta:
+- python wrf_interpolation.py
+  constant/boundaryData
+
+- python cmaq_interpolation.py
+  constant/boundaryData

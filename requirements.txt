@@ -2,4 +2,6 @@ wrf-python
 numpy
 netCDF4
 xarray
+monetio
 pandas
+dask

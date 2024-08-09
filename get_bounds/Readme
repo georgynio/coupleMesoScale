@@ -1,0 +1,4 @@
+Para compilar este aquivo deve ser executado o Allwmake, 
+porem se recomenda editar os arquivos da pasta Make
+- No arquivo options, as bibliotecas necessarias
+- No arquivo files, os caminhos para os executaveis

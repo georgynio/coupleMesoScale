@@ -27,7 +27,7 @@ def process_boundary_file(file_name, nc, time, initial_time, path):
 
     with open(os.path.join(output_dir, "U"), "w", encoding="utf-8") as f_u:
         f_u.write(f"{bdy.shape[0]}\n(\n")
-        for i, v in enumerate(zip(val_v, val_u, val_w)):
+        for i, v in enumerate(zip(val_u, val_v, val_w)):
             f_u.write(f'({float(v[0])} {float(v[1])} {float(v[2])})\n')            
         f_u.write(")")
 
@@ -46,35 +46,8 @@ names_to_process = ['bound_north', 'bound_south', 'bound_east', 'bound_west']
 ncfls = list(filter(lambda a: "wrfout" in a, files))
 nc = os.path.join(path, ncfls[0])
 
-
-cabecalho = """/*--------------------------------*- C++ -*----------------------------------*\\
-| =========                 |                                                 |
-| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\    /   O peration     | Version:                                        |
-|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
-|    \\/     M anipulation  |                                                 |
-\*---------------------------------------------------------------------------*/
-FoamFile
-{
-    version     2.0;
-    format      ascii;
-    class       vectorField;
-    object      points;
-}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n"""
-
-
-cabecalho_2 = """/*--------------------------------*- C++ -*----------------------------------*\\
-| =========                 |                                                 |
-| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\    /   O peration     | Version:                                        |
-|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
-|    \\/     M anipulation  |                                                 |
-\*---------------------------------------------------------------------------*/
-\n\n"""
-
-initial = 10*24
-end = 31*24
+initial = 0*24
+end = 33*24
 # Procesar cada nombre de archivo
 for time in range(initial, end, 1):
     for name in names_to_process:

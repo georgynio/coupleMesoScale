@@ -11,20 +11,19 @@ Coordinate = namedtuple('Coordinate', ['latitude', 'longitude', 'height'])
 earth_radius = 6370000
 
 class bdy_value:
-    def __init__(self, df=None, nc=None, mode=None, metcro3d=None):
+    def __init__(self, df=None, nc=None, mode=None, metcro3d=None, units=None):
         """Initialize values
         Args:
         - nc: path to netcdf file
         - df: path to dataframe file
         - mode: either 'wrf' or 'cmaq'
+        - units: default ppmV, option ug/m3
         """
+        assert mode in ["wrf", "cmaq"], "Invalid mode option. Choose either 'wrf' or 'cmaq'."
+
         self.nc = nc
         self.metcro3d = metcro3d
-        if mode in ["wrf", "cmaq"]:
-            self.mode = mode
-        else:
-            raise ValueError("Invalid mode option. Choose either 'wrf' or 'cmaq'.")
-
+        self.mode = mode
         self.df = pd.read_csv(
             df,
             names=["latitude", "longitude", "height"],
@@ -33,30 +32,25 @@ class bdy_value:
             sep=";",
         )
         self.coordinate_dict = self._make_coordinate_dict()
-
+        self.units = units
+    
     def _get_mode(self, varname=None, time=0):
+        nc_file = xr.open_dataset(self.nc, chunks={"time": 1})
         if self.mode == "wrf":
-            nc_file = xr.open_dataset(self.nc)
-            if varname == "U":
-                v_var = _dstag(nc_file[varname][time], 2)
-            elif varname == "V":
-                v_var = _dstag(nc_file[varname][time], 1)
-            elif varname == "W":
-                v_var = _dstag(nc_file[varname][time], 0)
-            # To calculate WRF height:
-            # The height of model levels above ground can be obtained as follow
-            # [(PH+PHB)/9.8 - terrain height].
-            dx = nc_file.DX
-            dy = nc_file.DY
+            # Asegúrate de que todas las variables necesarias sean extraídas aquí
+            if varname in ["U", "V", "W"]:
+                v_var = _dstag(nc_file[varname][time], self._get_stagger_dim(varname))
+            else:
+                v_var = nc_file[varname][time]
             ph = _dstag(nc_file["PH"][time], 0)
             ph_b = _dstag(nc_file["PHB"][time], 0)
-            hgt = nc_file["HGT"][0]
+            hgt = nc_file["HGT"][0] # topografia
             height = (ph + ph_b) / 9.8 - hgt
             lat = nc_file["XLAT"][time]
             lon = nc_file["XLONG"][time]
-
+            dx = nc_file.DX  # Asegúrate de que DX está definido en tu archivo nc
+            dy = nc_file.DY  # Asegúrate de que DY está definido en tu archivo nc
         elif self.mode == "cmaq":
-            nc_file = xr.open_dataset(self.nc)
             grid = grid_from_dataset(nc_file, earth_radius=earth_radius)
             area_def = get_ioapi_pyresample_area_def(nc_file, grid)
             nc_file = nc_file.assign_attrs({"proj4_srs": grid})
@@ -66,23 +60,42 @@ class bdy_value:
                     nc_file[i].attrs[j] = nc_file[i].attrs[j].strip()
             nc_file = _get_latlon(nc_file, area_def)
             m3d = xr.open_dataset(self.metcro3d)
-            v_var = nc_file[varname][time]
-            dx = nc_file.XCELL
-            dy = nc_file.YCELL
-            #m3d = m3d.rename_dims(dims_dict={"LAY": "z", "ROW": "y", "COL": "x"})
+            if self.units == 'ug/m3':
+                press = m3d['PRES'][time]
+                temp = m3d['TA'][time]
+                v_var = nc_file[varname][time] * press / (temp*8.314)
+            else:
+                v_var = nc_file[varname][time]
             height = m3d["ZH"][time]
             lat = nc_file.latitude
             lon = nc_file.longitude
+            dx = nc_file.XCELL
+            dy = nc_file.YCELL
 
         return lat, lon, height, dx, dy, v_var
 
-    def _make_coordinate_dict(self):
-        coordinate_dict = defaultdict(list)
-        for row in self.df.itertuples():
-            coordinate = Coordinate(row.latitude, row.longitude, row.height)
-            coordinate_dict[row.latitude, row.longitude].append(coordinate)
-        return coordinate_dict
+    def _get_stagger_dim(self, varname):
+        """
+        Determine the stagger dimension for WRF variables based on their standard staggering.
 
+        Args:
+            varname (str): Variable name to check the staggering dimension.
+
+        Returns:
+            int: Stagger dimension index for the variable.
+        """
+        if varname in ["U", "V", "W"]:
+            if varname == "U":
+                return 2  # U is typically staggered in the west_east direction
+            elif varname == "V":
+                return 1  # V is typically staggered in the south_north direction
+            elif varname == "W":
+                return 0  # W is typically staggered in the bottom_top direction
+        return None  # Return None if no staggering dimension is applicable
+        
+    def _make_coordinate_dict(self):
+        return {(row.latitude, row.longitude): Coordinate(row.latitude, row.longitude, row.height) 
+                for row in self.df.itertuples()}
 
     def count_coordinates(self):
         # Utilizar Counter para contar la ocurrencia de coordenadas
@@ -97,56 +110,48 @@ class bdy_value:
         """
         Make a real crop of data from netcdf file
         """
-        crop_value = v_var.where(height <= self.df.height.max(), drop=True)
-        latmin, latmax = self.df.latitude.min(), self.df.latitude.max()
-        lonmin, lonmax = self.df.longitude.min(), self.df.longitude.max()
-        lat_values = find_nearest(lat, (latmin + latmax) / 2, coord="lat")
-        lon_values = find_nearest(lon, (lonmin + lonmax) / 2, coord="lon")
-
-
         with xr.set_options(keep_attrs=True):
-            if latmin != latmax and lonmin != lonmax:
+            crop_value = v_var.where(height.compute() <= self.df.height.max(), drop=True)
+            latmin, latmax = self.df.latitude.min(), self.df.latitude.max()
+            lonmin, lonmax = self.df.longitude.min(), self.df.longitude.max()
+            lat_values = find_nearest(lat.compute(), [latmin, latmax], coord="lat")
+            lon_values = find_nearest(lon.compute(), [lonmin, lonmax], coord="lon")
+            
+            if (distance(latmin, latmax, val="lat") > dy
+                and distance(lonmin, lonmax, val="lon") > dx):
+                eqs = 'difs'
                 crop_value = crop_value.where(
-                    (lat >= latmin) & (lat <= latmax), drop=True
+                    (lat >= latmin) & (lat <= latmax) & (lon >= lonmin) & (lon <= lonmax),
+                    drop=True
                 )
-                crop_value = crop_value.where(
-                    (lon >= lonmin) & (lon <= lonmax), drop=True
-                )
-            elif (lonmin == lonmax and latmin == latmax) or (
-                distance(latmin, latmax, val="lat") < dx
-                and distance(lonmin, lonmax, val="lon") < dy
-            ):
+            elif (distance(latmin, latmax, val="lat") < dy
+                  and distance(lonmin, lonmax, val="lon") < dx):
+                eqs = 'lats_lons'
                 if self.mode == "wrf":
-                    crop_value = crop_value.isel(
-                        south_north=slice(lon_values, lon_values + 1),
-                        west_east=slice(lat_values, lat_values + 1),
-                        drop=True,
-                    )
+                    crop_value = crop_value[:, lat_values[0], lon_values[0]]
                 elif self.mode == "cmaq":
-                    crop_value = crop_value.isel(
-                        COL=slice(lon_values, lon_values + 1),
-                        ROW=slice(lat_values, lat_values + 1),
-                        drop=True,
-                    )
-                # print(crop_value.shape)
-                # crop_value = crop_value.swap_dims({'x': 'longitude', 'y': 'latitude'})
-            elif latmin == latmax or distance(latmin, latmax, val="lat") < dx:
-                if self.mode == "wrf":
-                    crop_value = crop_value[:, lat_values, :]
-                elif self.mode == "cmaq":
-                    crop_value = crop_value.isel(y=lat_values)
+                    crop_value = crop_value[:-1, lat_values[0], lon_values[0]]
+            elif (distance(latmin, latmax, val="lat") < dy
+                  and distance(lonmin, lonmax, val="lon") > dx):
+                eqs = 'lats_eqs'
                 crop_value = crop_value.where(
-                    (lon >= lonmin) & (lon <= lonmax), drop=True
-                )
-            else:
+                    (lon.compute() >= lonmin) & (lon.compute() <= lonmax),
+                    drop=True)
                 if self.mode == "wrf":
-                    crop_value = crop_value[:, :, lon_values]
+                    crop_value = crop_value[:, lat_values[0], :]
                 elif self.mode == "cmaq":
-                    crop_value = crop_value.isel(y=lon_values)
+                    crop_value = crop_value[:-1, lat_values[0], :]
+            elif (distance(latmin, latmax, val="lat") > dy
+                  and distance(lonmin, lonmax, val="lon") < dx):
+                eqs = 'lons_eqs'
                 crop_value = crop_value.where(
-                    (lat >= latmin) & (lat <= latmax), drop=True
-                )
-        return crop_value
+                    (lat.compute() > latmin) & (lat.compute() < latmax),
+                    drop=True)
+                if self.mode == "wrf":
+                    crop_value = crop_value.loc[:-1, :, lon_values[0]]
+                elif self.mode == "cmaq":
+                    crop_value = crop_value.loc[:-1, 1:, lon_values[0]]
+        return crop_value, eqs
 
     def crop_data(self, varname="NO", time=0):
         """
@@ -162,11 +167,10 @@ class bdy_value:
             xarray: croped hight values
         """
         lat, lon, height, dx, dy, v_var = self._get_mode(varname=varname, time=time)
-        crop_variable = self._get_crop(lat, lon, height, dx, dy, v_var)
-        crop_height = self._get_crop(lat, lon, height, dx, dy, height)
-        return crop_variable, crop_height
+        crop_variable, eqs = self._get_crop(lat, lon, height, dx, dy, v_var)
+        crop_height, eqs = self._get_crop(lat, lon, height, dx, dy, height)
+        return crop_variable, crop_height, eqs
     
-    #@timeit
     def _make_dict(self, varname="NO", time=0):
         """
         Make a dictionary with coordinates and height as key and the WRF variable value.
@@ -180,23 +184,20 @@ class bdy_value:
                         Example: {(-20.264686584472656, -40.2711181640625, 271.5928649902344): -0.4926649332046509}
         """
         
-        varn_, var_height = self.crop_data(varname=varname, time=time)
+        varn_, var_height, _ = self.crop_data(varname=varname, time=time)
         
-        key_condition = lambda v, i: (float(v.XLAT), float(v.XLONG), float(v.values)) if self.mode == "wrf" else (float(v.ROW), float(v.COL), float(v.values))
-
-        #return dict(
-        #    zip(
-        #        map(key_condition, var_height, range(len(var_height))),
-        #        map(float, varn_),
-        #    )
-        #)
         coordinate_dict = defaultdict(list)
         for height, value in zip(var_height, varn_):
-            coordinate = key_condition(height, 0)
-            coordinate_dict[coordinate].append(float(value))
+            for h, val in zip(height, value):
+                # Determine the key based on the mode
+                if self.mode == "wrf":
+                    coordinate = (float(h.XLAT), float(h.XLONG), float(h.values))
+                else:
+                    coordinate = (float(h.latitude), float(h.longitude), float(h.values))
+                coordinate_dict[coordinate].append(float(val))
+        
         return coordinate_dict
 
-    
     def _are_coordinates_equal(self, v1, v2):
         """
         Check if the coordinates of two points are equal.
@@ -205,7 +206,6 @@ class bdy_value:
             return v1.XLAT == v2.XLAT and v1.XLONG == v2.XLONG
         elif self.mode == "cmaq":
             return v1.y == v2.y and v1.x == v2.x
-
 
     def _get_ll(self, varname=None, time=None):
         """
@@ -216,8 +216,8 @@ class bdy_value:
         A list with the WRF lat and long corresponding to bound_file
         """
         lat, lon, _, _, _, _ = self._get_mode(varname=varname, time=time)
-        y = find_nearest(lat, self.df.latitude, coord="lat")
-        x = find_nearest(lon, self.df.longitude, coord="lon")
+        y = find_nearest(lat.compute(), self.df.latitude, coord="lat")
+        x = find_nearest(lon.compute(), self.df.longitude, coord="lon")
         return lat[y, 0], lon[0, x]
 
     def var_dict(self, varname="NO", time=0):
@@ -247,28 +247,21 @@ class bdy_value:
             new_val.append(d_[tuple(linha)])
         return new_val
 
-
 def _dstag(varName, stagger_dim):
     var_shape = varName.shape
     num_dims = varName.ndim
     stagger_dim_size = var_shape[stagger_dim]
 
-    # Dynamically building the range slices to create the appropriate
-    # number of ':'s in the array accessor lists.
-    # For example, for a 3D array, the calculation would be
-    # result = .5 * (var[:,:,0:stagger_dim_size-2]
-    #                    + var[:,:,1:stagger_dim_size-1])
-    # for stagger_dim=2.  So, full slices would be used for dims 0 and 1, but
-    # dim 2 needs the special slice.
+    # Dinámicamente construyendo los rangos de slices para crear el número adecuado de ':' en las listas de acceso de array.
     full_slice = slice(None)
     slice1 = slice(0, stagger_dim_size - 1, 1)
     slice2 = slice(1, stagger_dim_size, 1)
 
-    # default to full slices
+    # Por defecto a full slices
     dim_ranges_1 = [full_slice] * num_dims
     dim_ranges_2 = [full_slice] * num_dims
 
-    # for the stagger dim, insert the appropriate slice range
+    # Para la dimensión stagger, inserta el rango de slice adecuado
     dim_ranges_1[stagger_dim] = slice1
     dim_ranges_2[stagger_dim] = slice2
 
@@ -280,29 +273,26 @@ def _dstag(varName, stagger_dim):
         varName = varName.rename({"bottom_top_stag": "bottom_top"})
     return 0.5 * (varName[tuple(dim_ranges_1)] + varName[tuple(dim_ranges_2)])
 
-
 def find_nearest(array, values, coord=None):
     """
-    Get the index of nearest latitude or longitude value
+    Obtener el índice del valor de latitud o longitud más cercano
     """
     if isinstance(values, (float, int)):
         if coord == "lon":
-            return np.argmin(np.abs(array[0, :].values - values))
+            return np.argmin(np.abs(array[0, :].values - values)) + 1
         if coord == "lat":
-            return np.argmin(np.abs(array[:, 0].values - values))
+            return np.argmin(np.abs(array[:, 0].values - values)) + 1
     else:
         nearest = []
         for value in values:
             if coord == "lon":
-                nearest.append(np.argmin(np.abs(array[0, :].values - value)))
+                nearest.append(np.argmin(np.abs(array[0, :].values - value)) + 1)
             if coord == "lat":
-                nearest.append(np.argmin(np.abs(array[:, 0].values - value)))
+                nearest.append(np.argmin(np.abs(array[:, 0].values - value)) + 1)
         return nearest
 
-
-
 def distance(val1, val2, val=None):
-    R = 6371  # Earth's radius in kilometers
+    R = 6371  # Radio de la Tierra en kilómetros
     if val == "lat":
         lat1, lat2 = val1, val2
         lon1, lon2 = 0, 0
@@ -314,40 +304,36 @@ def distance(val1, val2, val=None):
     lat1 = math.radians(lat1)
     lat2 = math.radians(lat2)
 
-    a = math.sin(dLat / 2) ** 2 + math.sin(dLon / 2) ** 2 * math.cos(lat1) * math.cos(
-        lat2
-    )
+    a = math.sin(dLat / 2) ** 2 + math.sin(dLon / 2) ** 2 * math.cos(lat1) * math.cos(lat2)
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
-
+    return R * c * 1000  # en metros
 
 def search_tuple(dict_item, new_key):
     closest_key = None
     closest_distance = None
     for key in dict_item.keys():
-        # calculate the Euclidean distance between the two tuples
+        # calcula la distancia euclidiana entre las dos tuplas
         distance = sum((a - b) ** 2 for a, b in zip(key, new_key)) ** 0.5
-        # update the closest key and shortest distance
+        # actualiza la clave más cercana y la distancia más corta
         if closest_distance is None or distance < closest_distance:
             closest_key = key
             closest_distance = distance
     return dict_item.get(closest_key)
 
 def _ioapi_grid_from_dataset(ds, earth_radius=6370000):
-    """SGet the IOAPI projection out of the file into proj4.
+    """Obtiene la proyección IOAPI del archivo en proj4.
 
     Parameters
     ----------
     ds : type
-        Description of parameter `ds`.
+        Descripción del parámetro `ds`.
     earth_radius : type
-        Description of parameter `earth_radius`.
+        Descripción del parámetro `earth_radius`.
 
     Returns
     -------
     type
-        Description of returned object.
-
+        Descripción del objeto devuelto.
     """
 
     pargs = dict()
@@ -380,28 +366,25 @@ def _ioapi_grid_from_dataset(ds, earth_radius=6370000):
         p4 = p4.format(**pargs)
     else:
         raise NotImplementedError("IOAPI proj not implemented yet: " "{}".format(proj_id))
-    # area_def = _get_ioapi_pyresample_area_def(ds)
-    return p4  # , area_def
+    return p4
 
 def grid_from_dataset(ds, earth_radius=6370000):
-    """Short summary.
+    """Resumen corto.
 
     Parameters
     ----------
     ds : type
-        Description of parameter `ds`.
+        Descripción del parámetro `ds`.
     earth_radius : type
-        Description of parameter `earth_radius`.
+        Descripción del parámetro `earth_radius`.
 
     Returns
     -------
     type
-        Description of returned object.
-
+        Descripción del objeto devuelto.
     """
-    # maybe its an IOAPI file
+    # quizás es un archivo IOAPI
     if hasattr(ds, "IOAPI_VERSION") or hasattr(ds, "P_ALP"):
-        # IOAPI_VERSION
         return _ioapi_grid_from_dataset(ds, earth_radius=earth_radius)
 
 def get_ioapi_pyresample_area_def(ds, proj4_srs):
@@ -425,22 +408,21 @@ def get_ioapi_pyresample_area_def(ds, proj4_srs):
     return area_def
 
 def _get_latlon(dset, area):
-    """Calculates the lat and lons from the pyreample.geometry.AreaDefinition
+    """Calcula las latitudes y longitudes del pyreample.geometry.AreaDefinition
 
     Parameters
     ----------
     dset : xarray.Dataset
-        CMAQ model data
+        Datos del modelo CMAQ
 
     Returns
     -------
     xarray.Dataset
-        CMAQ model data including the latitude and longitude in standard
-        format.
-
+        Datos del modelo CMAQ incluyendo la latitud y longitud en formato estándar.
     """
     lon, lat = area.get_lonlats()
     dset["longitude"] = xr.DataArray(lon[::-1, :], dims=["ROW", "COL"])
     dset["latitude"] = xr.DataArray(lat[::-1, :], dims=["ROW", "COL"])
     dset = dset.assign_coords(longitude=dset.longitude, latitude=dset.latitude)
     return dset
+
